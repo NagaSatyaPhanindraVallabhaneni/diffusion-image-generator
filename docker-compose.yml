@@ -1,0 +1,9 @@
+services:
+  diffusion:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models:ro
+    environment:
+      - DIFFUSION_CHECKPOINT=/app/models/ema.pt

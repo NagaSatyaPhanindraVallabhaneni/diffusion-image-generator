@@ -1,0 +1,16 @@
+# Core ML (CPU wheels recommended; see Dockerfile)
+torch>=2.2
+torchvision>=0.17
+# API + serving
+fastapi>=0.110
+uvicorn>=0.29
+httpx>=0.27
+pydantic>=2.6
+# Viz / utils
+numpy>=1.26
+matplotlib>=3.8
+pillow>=10.2
+tqdm>=4.66
+# Dev
+pytest>=8.0
+ruff>=0.3
