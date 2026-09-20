@@ -1,85 +1,47 @@
-"""Sampling utilities: load a checkpoint and generate images from pure noise."""
+"""CLI: generate images and render the denoising trajectory."""
 
-import io
-import json
+import argparse
 import os
 
-import torch
-from PIL import Image
-from torchvision.utils import make_grid
-
-from .ddpm import GaussianDiffusion
-from .train import build_model
+from diffusion.sample import generate_images, load_checkpoint, save_image_grid
+from diffusion.visualize import render_denoising_trajectory, render_sample_grid
 
 
-def load_checkpoint(checkpoint_path, device="cpu"):
-    """Load EMA weights + config saved by train.py.
+def main():
+    parser = argparse.ArgumentParser(description="Sample from a trained DDPM")
+    parser.add_argument("--checkpoint", default="models/ema.pt")
+    parser.add_argument("--n-images", type=int, default=16)
+    parser.add_argument("--digit", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--out-dir", default="artifacts")
+    parser.add_argument("--trajectory", action="store_true",
+                        help="also render the denoising trajectory")
+    args = parser.parse_args()
 
-    Expects ``ema.pt`` (state dict) and ``config.json`` side by side.
-    Returns (model, diffusion, config) with the model in eval mode.
-    """
-    if not os.path.exists(checkpoint_path):
-        raise FileNotFoundError(f"checkpoint not found: {checkpoint_path}")
-    config_path = os.path.join(os.path.dirname(checkpoint_path), "config.json")
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(
-            f"config.json not found next to checkpoint: {config_path}"
+    model, diffusion, config = load_checkpoint(args.checkpoint)
+    os.makedirs(args.out_dir, exist_ok=True)
+
+    images = generate_images(
+        model, diffusion, args.n_images, digit=args.digit, seed=args.seed
+    )
+    grid_path = os.path.join(args.out_dir, "samples.png")
+    save_image_grid(images, grid_path)
+    print(f"saved {args.n_images} samples -> {grid_path}")
+
+    pretty = os.path.join(args.out_dir, "samples_grid.png")
+    render_sample_grid(
+        model, diffusion, n_images=args.n_images, digit=args.digit,
+        seed=args.seed, save_path=pretty,
+    )
+    print(f"saved labeled grid -> {pretty}")
+
+    if args.trajectory:
+        traj_path = os.path.join(args.out_dir, "denoising_trajectory.png")
+        render_denoising_trajectory(
+            model, diffusion, digit=args.digit, seed=args.seed, save_path=traj_path
         )
-    with open(config_path) as f:
-        config = json.load(f)
-    config["channel_mults"] = tuple(config["channel_mults"])
-    model = build_model(config, device)
-    state = torch.load(checkpoint_path, map_location=device, weights_only=True)
-    model.load_state_dict(state)
-    model.eval()
-    diffusion = GaussianDiffusion(
-        timesteps=config["timesteps"],
-        beta_start=config["beta_start"],
-        beta_end=config["beta_end"],
-        schedule=config["schedule"],
-    )
-    return model, diffusion, config
+        print(f"saved denoising trajectory -> {traj_path}")
 
 
-@torch.no_grad()
-def generate_images(model, diffusion, n_images, digit=None, seed=0, device="cpu"):
-    """Generate n_images from pure noise. Returns a tensor in [-1, 1]."""
-    if digit is not None and model.num_classes is None:
-        raise ValueError("digit requested but the model was trained unconditionally")
-    if digit is not None and not (0 <= digit < model.num_classes):
-        raise ValueError(f"digit must be in [0, {model.num_classes - 1}]")
-    torch.manual_seed(seed)
-    y = (
-        torch.full((n_images,), digit, dtype=torch.long, device=device)
-        if digit is not None
-        else None
-    )
-    images, _ = diffusion.p_sample_loop(
-        model, (n_images, 1, 28, 28), y=y, device=device
-    )
-    return images
-
-
-def denormalize(images):
-    """[-1, 1] -> [0, 1] for display."""
-    return images.clamp(-1, 1).add(1).div(2)
-
-
-def save_image_grid(images, path, nrow=None):
-    """Save a grid of [-1, 1] images as a PNG."""
-    nrow = nrow or int(images.shape[0] ** 0.5)
-    grid = make_grid(denormalize(images).cpu(), nrow=nrow, padding=2, pad_value=1.0)
-    array = (grid.permute(1, 2, 0).numpy() * 255).round().astype("uint8")
-    Image.fromarray(array[:, :, 0] if array.shape[2] == 1 else array).save(path)
-    return path
-
-
-def grid_png_bytes(images, nrow=None):
-    """Render a grid of [-1, 1] images to PNG bytes (for the API)."""
-    nrow = nrow or int(images.shape[0] ** 0.5)
-    grid = make_grid(denormalize(images).cpu(), nrow=nrow, padding=2, pad_value=1.0)
-    array = (grid.permute(1, 2, 0).numpy() * 255).round().astype("uint8")
-    img = Image.fromarray(array[:, :, 0] if array.shape[2] == 1 else array)
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
+if __name__ == "__main__":
+    main()
